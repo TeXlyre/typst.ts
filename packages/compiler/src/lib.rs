@@ -21,6 +21,9 @@ use reflexo_typst::typst::foundations::IntoValue;
 use reflexo_typst::vfs::browser::ProxyAccessModel;
 use wasm_bindgen::prelude::*;
 
+#[cfg(feature = "pdf")]
+use reflexo_typst::args::PdfStandard;
+
 use crate::font::FontResolverImpl;
 use crate::utils::console_log;
 #[cfg(feature = "incr")]
@@ -101,6 +104,7 @@ fn convert_diag<'a>(
 #[wasm_bindgen]
 pub struct TypstCompiler {
     pub(crate) verse: TypstBrowserUniverse,
+    pdf_standard: Option<String>,
 }
 
 impl TypstCompiler {
@@ -108,6 +112,7 @@ impl TypstCompiler {
         access_model: ProxyAccessModel,
         registry: JsRegistry,
         fonts: FontResolverImpl,
+        pdf_standard: Option<String>,
     ) -> Result<Self, JsValue> {
         Ok(Self {
             verse: TypstBrowserUniverse::new(
@@ -117,6 +122,7 @@ impl TypstCompiler {
                 registry,
                 fonts,
             ),
+            pdf_standard,
         })
     }
 }
@@ -321,6 +327,7 @@ impl TypstCompiler {
 
         Ok(TypstCompileWorld {
             graph: WorldComputeGraph::new(CompileSnapshot::from_world(world)),
+            pdf_standard: self.pdf_standard.clone(),
         })
     }
 
@@ -386,6 +393,7 @@ type HtmlCFlag = CFlag<reflexo_typst::TypstHtmlDocument>;
 #[wasm_bindgen]
 pub struct TypstCompileWorld {
     graph: Arc<WorldComputeGraph<BrowserCompilerFeat>>,
+    pdf_standard: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -425,7 +433,23 @@ impl TypstCompileWorld {
             #[cfg(feature = "svg")]
             0 => SvgModuleExport::run(&self.graph, &doc, &ExportWebSvgModuleTask::default())?,
             #[cfg(feature = "pdf")]
-            1 => PdfExport::run(&self.graph, &doc, &ExportPdfTask::default())?,
+            1 => {
+                let task = if let Some(ref standard_str) = self.pdf_standard {
+                    let standards: Vec<PdfStandard> = 
+                        serde_json::from_str(&format!("[{}]", standard_str.trim_matches(|c| c == '[' || c == ']')))
+                            .map_err(|e| format!("failed to parse PDF standards: {}", e))?;
+                    
+                    ExportPdfTask {
+                        export: Default::default(),
+                        pdf_standards: standards,
+                        creation_timestamp: None,
+                        pages: None,
+                    }
+                } else {
+                    ExportPdfTask::default()
+                };
+                PdfExport::run(&self.graph, &doc, &task)?
+            },
             2 => Bytes::new([]),
             _ => {
                 let _ = doc;
