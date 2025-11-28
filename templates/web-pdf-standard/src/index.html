@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Typst PDF Standard Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .container {
+            display: grid;
+            gap: 20px;
+        }
+
+        .panel {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 20px;
+            background: #f9f9f9;
+        }
+
+        textarea {
+            width: 100%;
+            height: 300px;
+            font-family: 'Courier New', monospace;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        select,
+        button {
+            padding: 10px 20px;
+            font-size: 14px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            margin: 5px;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            border: none;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        label {
+            font-weight: bold;
+            margin-right: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Typst PDF Standard Test</h1>
+
+    <div class="container">
+        <div class="panel">
+            <h2>Typst Document</h2>
+            <textarea id="typstCode">#set document(title: "Test Document")
+#set page(paper: "a4")
+
+= Hello Typst
+
+This is a test document to verify PDF standard configuration.
+
+== Features
+- PDF/A compliance testing
+- PDF version selection
+- Standard validation
+
+#figure(
+  rect(width: 100%, height: 50pt, fill: blue.lighten(80%)),
+  caption: [A simple figure]
+)
+
+#table(
+  columns: 3,
+  [Header 1], [Header 2], [Header 3],
+  [Data 1], [Data 2], [Data 3],
+  [Data 4], [Data 5], [Data 6],
+)</textarea>
+        </div>
+
+        <div class="panel">
+            <h2>PDF Configuration</h2>
+            <div class="controls">
+                <label for="pdfStandard">PDF Standard:</label>
+                <select id="pdfStandard">
+                    <option value="">Default (PDF 1.7)</option>
+                    <option value='"1.4"'>PDF 1.4</option>
+                    <option value='"1.5"'>PDF 1.5</option>
+                    <option value='"1.6"'>PDF 1.6</option>
+                    <option value='"1.7"'>PDF 1.7</option>
+                    <option value='"2.0"'>PDF 2.0</option>
+                    <option value='"a-1b"'>PDF/A-1b</option>
+                    <option value='"a-1a"'>PDF/A-1a</option>
+                    <option value='"a-2b"'>PDF/A-2b</option>
+                    <option value='"a-2u"'>PDF/A-2u</option>
+                    <option value='"a-2a"'>PDF/A-2a</option>
+                    <option value='"a-3b"'>PDF/A-3b</option>
+                    <option value='"a-3u"'>PDF/A-3u</option>
+                    <option value='"a-3a"'>PDF/A-3a</option>
+                    <option value='"a-4"'>PDF/A-4</option>
+                    <option value='"a-4f"'>PDF/A-4f</option>
+                    <option value='"a-4e"'>PDF/A-4e</option>
+                    <option value='"ua-1"'>PDF/UA-1</option>
+                </select>
+                <button id="compileBtn" disabled>Compile to PDF</button>
+            </div>
+            <div id="status"></div>
+        </div>
+
+        <div class="panel">
+            <h2>Output</h2>
+            <div id="output"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Update this path to point to your built WASM package
+        import init, { TypstCompilerBuilder } from './typst_ts_web_compiler.js';
+
+        let compiler = null;
+        const statusEl = document.getElementById('status');
+        const compileBtn = document.getElementById('compileBtn');
+        const outputEl = document.getElementById('output');
+
+        function showStatus(message, type = 'info') {
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+
+        async function initCompiler() {
+            try {
+                showStatus('Initializing WASM module...', 'info');
+                await init();
+
+                showStatus('Building compiler...', 'info');
+                const builder = new TypstCompilerBuilder();
+
+                // Set up dummy access model (required for browser environment)
+                await builder.set_dummy_access_model();
+
+                compiler = await builder.build();
+
+                compileBtn.disabled = false;
+                showStatus('Compiler ready!', 'success');
+            } catch (error) {
+                showStatus(`Initialization failed: ${error.message}`, 'error');
+                console.error('Init error:', error);
+            }
+        }
+
+        async function compilePDF() {
+            if (!compiler) {
+                showStatus('Compiler not initialized', 'error');
+                return;
+            }
+
+            try {
+                compileBtn.disabled = true;
+                showStatus('Compiling...', 'info');
+
+                const typstCode = document.getElementById('typstCode').value;
+                const pdfStandard = document.getElementById('pdfStandard').value;
+
+                // Add source file
+                const mainPath = '/main.typ';
+                if (!compiler.add_source(mainPath, typstCode)) {
+                    throw new Error('Failed to add source file');
+                }
+
+                // Create a new builder with PDF standard if needed
+                if (pdfStandard) {
+                    showStatus(`Compiling with PDF standard: ${pdfStandard}...`, 'info');
+
+                    // Rebuild compiler with PDF standard
+                    const builder = new TypstCompilerBuilder();
+                    await builder.set_dummy_access_model();
+                    builder.set_pdf_standard(pdfStandard);
+                    compiler = await builder.build();
+
+                    // Re-add source
+                    if (!compiler.add_source(mainPath, typstCode)) {
+                        throw new Error('Failed to add source file');
+                    }
+                }
+
+                // Compile to PDF
+                const result = compiler.compile(mainPath, null, 'pdf', 0);
+
+                // Create blob and download link
+                const blob = new Blob([result], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+
+                // Display result
+                outputEl.innerHTML = `
+                    <p>PDF generated successfully!</p>
+                    <a href="${url}" download="output.pdf">
+                        <button>Download PDF</button>
+                    </a>
+                    <br><br>
+                    <iframe src="${url}" width="100%" height="600px" style="border: 1px solid #ddd;"></iframe>
+                `;
+
+                const standardText = pdfStandard ?
+                    `PDF standard: ${document.getElementById('pdfStandard').selectedOptions[0].text}` :
+                    'Default PDF 1.7';
+                showStatus(`Compilation successful! ${standardText}`, 'success');
+
+            } catch (error) {
+                showStatus(`Compilation failed: ${error.message}`, 'error');
+                console.error('Compilation error:', error);
+                outputEl.innerHTML = `<pre style="color: red;">${error.message}\n${error.stack}</pre>`;
+            } finally {
+                compileBtn.disabled = false;
+            }
+        }
+
+        // Initialize on page load
+        initCompiler();
+
+        // Set up event listeners
+        compileBtn.addEventListener('click', compilePDF);
+
+        // Allow Enter key in textarea to insert tab
+        document.getElementById('typstCode').addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = e.target.selectionStart;
+                const end = e.target.selectionEnd;
+                e.target.value = e.target.value.substring(0, start) + '  ' + e.target.value.substring(end);
+                e.target.selectionStart = e.target.selectionEnd = start + 2;
+            }
+        });
+    </script>
+</body>
+
+</html>
