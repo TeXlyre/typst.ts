@@ -6,3 +6,9 @@ The compiler can run in browser. See documentation for details:
 - [Compiler interfaces](https://myriad-dreamin.github.io/typst.ts/cookery/guide/compilers.html)
 
 It can also runs in node.js, but limits its access to operating system. Therefore, I'd suggest to use [typst.node](https://github.com/Myriad-Dreamin/typst.ts/tree/main/packages/typst.node) for fully accessing to operating system.
+
+Run the following to build independently:
+
+```
+wasm-pack build --target web -- --no-default-features --features web,misc
+```
