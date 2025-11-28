@@ -17,6 +17,7 @@ pub struct TypstCompilerBuilder {
     access_model: Option<ProxyAccessModel>,
     package_registry: Option<JsRegistry>,
     fb: TypstFontResolverBuilder,
+    pdf_standard: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -28,6 +29,7 @@ impl TypstCompilerBuilder {
             access_model: None,
             package_registry: None,
             fb: TypstFontResolverBuilder::default(),
+            pdf_standard: None,
         };
         res.set_dummy_access_model()?;
         Ok(res)
@@ -83,6 +85,11 @@ impl TypstCompilerBuilder {
 
         Ok(())
     }
+    
+    pub fn set_pdf_standard(&mut self, standard: String) -> Result<()> {
+        self.pdf_standard = Some(standard);
+        Ok(())
+    }
 
     // 400 KB
     pub async fn add_raw_font(&mut self, data: Uint8Array) -> Result<(), JsValue> {
@@ -114,7 +121,7 @@ impl TypstCompilerBuilder {
         #[cfg(feature = "fonts")]
         searcher.add_embedded();
 
-        TypstCompiler::new(access_model, registry, searcher.base.build())
+        TypstCompiler::new(access_model, registry, searcher.base.build(), self.pdf_standard)
     }
 }
 
