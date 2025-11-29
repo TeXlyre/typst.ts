@@ -22,7 +22,7 @@ use reflexo_typst::vfs::browser::ProxyAccessModel;
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "pdf")]
-use reflexo_typst::args::PdfStandard;
+use serde::{Deserialize, Serialize};
 
 use crate::font::FontResolverImpl;
 use crate::utils::console_log;
@@ -104,7 +104,8 @@ fn convert_diag<'a>(
 #[wasm_bindgen]
 pub struct TypstCompiler {
     pub(crate) verse: TypstBrowserUniverse,
-    pdf_standard: Option<String>,
+    #[cfg(feature = "pdf")]
+    pdf_opts: Option<RenderPdfOpts>,
 }
 
 impl TypstCompiler {
@@ -112,7 +113,8 @@ impl TypstCompiler {
         access_model: ProxyAccessModel,
         registry: JsRegistry,
         fonts: FontResolverImpl,
-        pdf_standard: Option<String>,
+        #[cfg(feature = "pdf")]
+        pdf_opts: Option<RenderPdfOpts>,
     ) -> Result<Self, JsValue> {
         Ok(Self {
             verse: TypstBrowserUniverse::new(
@@ -122,7 +124,8 @@ impl TypstCompiler {
                 registry,
                 fonts,
             ),
-            pdf_standard,
+            #[cfg(feature = "pdf")]
+            pdf_opts,
         })
     }
 }
@@ -327,7 +330,8 @@ impl TypstCompiler {
 
         Ok(TypstCompileWorld {
             graph: WorldComputeGraph::new(CompileSnapshot::from_world(world)),
-            pdf_standard: self.pdf_standard.clone(),
+            #[cfg(feature = "pdf")]
+            pdf_opts: self.pdf_opts.clone(),
         })
     }
 
@@ -393,7 +397,8 @@ type HtmlCFlag = CFlag<reflexo_typst::TypstHtmlDocument>;
 #[wasm_bindgen]
 pub struct TypstCompileWorld {
     graph: Arc<WorldComputeGraph<BrowserCompilerFeat>>,
-    pdf_standard: Option<String>,
+    #[cfg(feature = "pdf")]
+    pdf_opts: Option<RenderPdfOpts>,
 }
 
 #[wasm_bindgen]
@@ -434,15 +439,19 @@ impl TypstCompileWorld {
             0 => SvgModuleExport::run(&self.graph, &doc, &ExportWebSvgModuleTask::default())?,
             #[cfg(feature = "pdf")]
             1 => {
-                let task = if let Some(ref standard_str) = self.pdf_standard {
-                    let standards: Vec<PdfStandard> = 
+                let task = if let Some(ref opts) = self.pdf_opts {
+                    let pdf_standards = if let Some(ref standard_str) = opts.pdf_standard {
                         serde_json::from_str(&format!("[{}]", standard_str.trim_matches(|c| c == '[' || c == ']')))
-                            .map_err(|e| format!("failed to parse PDF standards: {}", e))?;
+                            .map_err(|e| format!("failed to parse PDF standards: {}", e))?
+                    } else {
+                        vec![]
+                    };
                     
                     ExportPdfTask {
                         export: Default::default(),
-                        pdf_standards: standards,
-                        creation_timestamp: None,
+                        pdf_standards,
+                        no_pdf_tags: opts.pdf_tags.map(|v| !v).unwrap_or(false),
+                        creation_timestamp: opts.creation_timestamp,
                         pages: None,
                     }
                 } else {
@@ -572,6 +581,25 @@ impl TypstCompileWorld {
             .as_ref()
             .clone())
     }
+}
+
+#[cfg(feature = "pdf")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RenderPdfOpts {
+    /// (Experimental) An optional PDF standard to be used to export PDF.
+    ///
+    /// Please check {@link types.PdfStandard} for a non-exhaustive list of
+    /// standards.
+    pub pdf_standard: Option<String>,
+    /// By default, even when not producing a `PDF/UA-1` document, a tagged PDF
+    /// document is written to provide a baseline of accessibility. In some
+    /// circumstances (for example when trying to reduce the size of a document)
+    /// it can be desirable to disable tagged PDF.
+    pub pdf_tags: Option<bool>,
+    /// An optional (creation) timestamp to be used to export PDF, *in seconds*.
+    ///
+    /// This is used when you *enable auto timestamp* in the document.
+    pub creation_timestamp: Option<i64>,
 }
 
 struct CompilationDiagnostics {

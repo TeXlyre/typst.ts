@@ -208,44 +208,41 @@ This is a test document to verify PDF standard configuration.
                 const typstCode = document.getElementById('typstCode').value;
                 const pdfStandard = document.getElementById('pdfStandard').value;
 
-                // Add source file
                 const mainPath = '/main.typ';
                 if (!compiler.add_source(mainPath, typstCode)) {
                     throw new Error('Failed to add source file');
                 }
 
-                // Create a new builder with PDF standard if needed
                 if (pdfStandard) {
                     showStatus(`Compiling with PDF standard: ${pdfStandard}...`, 'info');
 
-                    // Rebuild compiler with PDF standard
                     const builder = new TypstCompilerBuilder();
                     await builder.set_dummy_access_model();
-                    builder.set_pdf_standard(pdfStandard);
+                    builder.set_pdf_opts({
+                        pdf_standard: pdfStandard,
+                        pdf_tags: null,
+                        creation_timestamp: null
+                    });
                     compiler = await builder.build();
 
-                    // Re-add source
                     if (!compiler.add_source(mainPath, typstCode)) {
                         throw new Error('Failed to add source file');
                     }
                 }
 
-                // Compile to PDF
                 const result = compiler.compile(mainPath, null, 'pdf', 0);
 
-                // Create blob and download link
                 const blob = new Blob([result], { type: 'application/pdf' });
                 const url = URL.createObjectURL(blob);
 
-                // Display result
                 outputEl.innerHTML = `
-                    <p>PDF generated successfully!</p>
-                    <a href="${url}" download="output.pdf">
-                        <button>Download PDF</button>
-                    </a>
-                    <br><br>
-                    <iframe src="${url}" width="100%" height="600px" style="border: 1px solid #ddd;"></iframe>
-                `;
+            <p>PDF generated successfully!</p>
+            <a href="${url}" download="output.pdf">
+                <button>Download PDF</button>
+            </a>
+            <br><br>
+            <iframe src="${url}" width="100%" height="600px" style="border: 1px solid #ddd;"></iframe>
+        `;
 
                 const standardText = pdfStandard ?
                     `PDF standard: ${document.getElementById('pdfStandard').selectedOptions[0].text}` :

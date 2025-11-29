@@ -17,7 +17,8 @@ pub struct TypstCompilerBuilder {
     access_model: Option<ProxyAccessModel>,
     package_registry: Option<JsRegistry>,
     fb: TypstFontResolverBuilder,
-    pdf_standard: Option<String>,
+    #[cfg(feature = "pdf")]
+    pdf_opts: Option<crate::RenderPdfOpts>,
 }
 
 #[wasm_bindgen]
@@ -29,7 +30,8 @@ impl TypstCompilerBuilder {
             access_model: None,
             package_registry: None,
             fb: TypstFontResolverBuilder::default(),
-            pdf_standard: None,
+            #[cfg(feature = "pdf")]
+            pdf_opts: None,
         };
         res.set_dummy_access_model()?;
         Ok(res)
@@ -86,8 +88,9 @@ impl TypstCompilerBuilder {
         Ok(())
     }
     
-    pub fn set_pdf_standard(&mut self, standard: String) -> Result<()> {
-        self.pdf_standard = Some(standard);
+    #[cfg(feature = "pdf")]
+    pub fn set_pdf_opts(&mut self, opts: JsValue) -> Result<(), JsValue> {
+        self.pdf_opts = Some(serde_wasm_bindgen::from_value(opts).map_err(|e| format!("{e:?}"))?);
         Ok(())
     }
 
@@ -121,7 +124,13 @@ impl TypstCompilerBuilder {
         #[cfg(feature = "fonts")]
         searcher.add_embedded();
 
-        TypstCompiler::new(access_model, registry, searcher.base.build(), self.pdf_standard)
+        TypstCompiler::new(
+            access_model,
+            registry,
+            searcher.base.build(),
+            #[cfg(feature = "pdf")]
+            self.pdf_opts,
+        )
     }
 }
 
