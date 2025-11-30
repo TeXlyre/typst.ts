@@ -1,6 +1,6 @@
 {
   "name": "@texlyre/typst.ts",
-  "version": "0.7.0-rc1",
+  "version": "0.7.0-rc1-1",
   "description": "Run Typst in JavaScriptWorld.",
   "author": "Myriad-Dreamin",
   "license": "Apache-2.0",
@@ -327,7 +327,7 @@
   },
   "peerDependencies": {
     "@myriaddreamin/typst-ts-renderer": "npm:@texlyre/typst-ts-renderer@^0.7.0-rc1",
-    "@myriaddreamin/typst-ts-web-compiler": "npm:@texlyre/typst-ts-web-compiler@^0.7.0-rc1"
+    "@myriaddreamin/typst-ts-web-compiler": "npm:@texlyre/typst-ts-web-compiler@^0.7.0-rc1-1"
   },
   "peerDependenciesMeta": {
     "@myriaddreamin/typst-ts-renderer": {
