@@ -326,8 +326,8 @@
     "idb": "^7.1.1"
   },
   "peerDependencies": {
-    "@myriaddreamin/typst-ts-renderer": "^0.7.0-rc1",
-    "@myriaddreamin/typst-ts-web-compiler": "^0.7.0-rc1"
+    "@myriaddreamin/typst-ts-renderer": "npm:@texlyre/typst-ts-renderer@^0.7.0-rc1",
+    "@myriaddreamin/typst-ts-web-compiler": "npm:@texlyre/typst-ts-web-compiler@^0.7.0-rc1"
   },
   "peerDependenciesMeta": {
     "@myriaddreamin/typst-ts-renderer": {
@@ -338,8 +338,8 @@
     }
   },
   "devDependencies": {
-    "@myriaddreamin/typst-ts-renderer": "*",
-    "@myriaddreamin/typst-ts-web-compiler": "*",
+    "@myriaddreamin/typst-ts-renderer": "npm:@texlyre/typst-ts-renderer@*",
+    "@myriaddreamin/typst-ts-web-compiler": "npm:@texlyre/typst-ts-web-compiler@*",
     "@types/web": "^0.0.188",
     "builtin-modules": "3.3.0",
     "resolve.exports": "2.0.3",
