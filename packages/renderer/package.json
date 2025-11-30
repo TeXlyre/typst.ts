@@ -1,5 +1,5 @@
 {
-  "name": "@myriaddreamin/typst-ts-renderer",
+  "name": "@texlyre/typst-ts-renderer",
   "version": "0.7.0-rc1",
   "description": "WASM module for rendering Typst documents in browser.",
   "author": "Myriad-Dreamin",
