@@ -1,5 +1,5 @@
 {
-  "name": "@myriaddreamin/typst-ts-web-compiler",
+  "name": "@texlyre/typst-ts-web-compiler",
   "version": "0.7.0-rc1",
   "description": "WASM module for Compiling Typst documents in JavaScript environment.",
   "author": "Myriad-Dreamin",
