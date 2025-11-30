@@ -318,6 +318,15 @@ export class TypstWorld {
   ): Promise<CompileResult<Uint8Array, D>> {
     return this[kObject].get_artifact(1, getDiagnosticsArg(opts?.diagnostics)) || {};
   }
+
+  /**
+   * Change the PDF options.
+   * 
+   * @param opts RenderPdfOpts
+   */
+  setPdfOpts(opts: any): void {
+    this[kObject].set_pdf_opts(opts);
+  }
 }
 
 /**
@@ -349,6 +358,8 @@ export interface TypstCompiler {
    * @param {any} opts - The PDF options to set.
    */
   setPdfOpts(opts: any): void;
+
+  setPdfOptsForNextCompile(opts: any): void;
 
   /**
    * Compile an document with the maintained state.
@@ -559,6 +570,10 @@ class TypstCompilerDriver implements TypstCompiler {
     this.pdfOpts = opts;
   }
 
+  setPdfOptsForNextCompile(opts: any): void {
+    this.pdfOpts = opts;
+  }
+
   setFonts(fonts: TypstFontResolver): void {
     this.compiler.set_fonts(fonts as any as typst.TypstFontResolver);
   }
@@ -570,6 +585,11 @@ class TypstCompilerDriver implements TypstCompiler {
         options.mainFilePath,
         convertInputs(options.inputs),
       );
+
+      if (this.pdfOpts) {
+        world.set_pdf_opts(this.pdfOpts);
+      }
+
       if ('incrementalServer' in options) {
         resolve(
           world.incr_compile(
