@@ -10,5 +10,5 @@ It can also runs in node.js, but limits its access to operating system. Therefor
 Run the following to build independently:
 
 ```
-wasm-pack build --target web -- --no-default-features --features web,misc
+npm run build
 ```
