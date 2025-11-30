@@ -1,6 +1,6 @@
 // @ts-ignore
 import type * as typst from '@myriaddreamin/typst-ts-web-compiler';
-import { buildComponent } from './init.mjs';
+import { buildComponent, type ComponentBuildHooks } from './init.mjs';
 import { SemanticTokens, SemanticTokensLegend, kObject } from './internal.types.mjs';
 
 import { loadFonts, type InitOptions } from './options.init.mjs';
@@ -344,6 +344,13 @@ export interface TypstCompiler {
   reset(): Promise<void>;
 
   /**
+   *  Set PDF compilation options.
+   * Note: This must be called before init() to take effect during compiler build.
+   * @param {any} opts - The PDF options to set.
+   */
+  setPdfOpts(opts: any): void;
+
+  /**
    * Compile an document with the maintained state.
    * @param {CompileOptions} options - The options for compiling the document.
    * @returns {Promise<Uint8Array>} - artifact in vector format.
@@ -502,6 +509,7 @@ export class TypstFontBuilderDriver implements TypstFontBuilder {
 class TypstCompilerDriver implements TypstCompiler {
   compiler: typst.TypstCompiler;
   compilerJs: typeof typst;
+  private pdfOpts: any;
 
   static defaultAssets = ['text' as const];
 
@@ -533,7 +541,22 @@ class TypstCompilerDriver implements TypstCompiler {
         'TypstCompiler: no font loader found, please use font loaders, e.g. loadFonts or preloadSystemFonts',
       );
     }
-    this.compiler = await buildComponent(options, gCompilerModule(this.compilerJs), TypstCompilerBuilder, {});
+
+    const hooks: ComponentBuildHooks = {};
+    if (this.pdfOpts) {
+      hooks.latelyBuild = (ctx: any) => {
+        ctx.builder.set_pdf_opts(this.pdfOpts);
+      };
+    }
+
+    this.compiler = await buildComponent(options, gCompilerModule(this.compilerJs), TypstCompilerBuilder, hooks);
+  }
+
+  setPdfOpts(opts: any): void {
+    if (this.compiler) {
+      throw new Error('setPdfOpts must be called before init()');
+    }
+    this.pdfOpts = opts;
   }
 
   setFonts(fonts: TypstFontResolver): void {

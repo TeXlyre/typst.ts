@@ -1,5 +1,5 @@
 {
-  "name": "@myriaddreamin/typst.ts",
+  "name": "@texlyre/typst.ts",
   "version": "0.7.0-rc1",
   "description": "Run Typst in JavaScriptWorld.",
   "author": "Myriad-Dreamin",
