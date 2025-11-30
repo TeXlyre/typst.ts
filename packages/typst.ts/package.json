@@ -330,8 +330,8 @@
     "idb": "^7.1.1"
   },
   "peerDependencies": {
-    "@myriaddreamin/typst-ts-renderer": "npm:@texlyre/typst-ts-renderer@>=0.8.0-rc1",
-    "@myriaddreamin/typst-ts-web-compiler": "npm:@texlyre/typst-ts-web-compiler@>=0.8.0-rc1"
+    "@myriaddreamin/typst-ts-renderer": "npm:@texlyre/typst-ts-renderer@^0.8.0-rc1",
+    "@myriaddreamin/typst-ts-web-compiler": "npm:@texlyre/typst-ts-web-compiler@^0.8.0-rc1"
   },
   "peerDependenciesMeta": {
     "@myriaddreamin/typst-ts-renderer": {
