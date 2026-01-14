@@ -1,6 +1,6 @@
 // @ts-ignore
 import type * as typst from '@myriaddreamin/typst-ts-web-compiler';
-import { buildComponent } from './init.mjs';
+import { buildComponent, type ComponentBuildHooks } from './init.mjs';
 import { SemanticTokens, SemanticTokensLegend, kObject } from './internal.types.mjs';
 
 import { loadFonts, type InitOptions } from './options.init.mjs';
@@ -318,6 +318,15 @@ export class TypstWorld {
   ): Promise<CompileResult<Uint8Array, D>> {
     return this[kObject].get_artifact(1, getDiagnosticsArg(opts?.diagnostics)) || {};
   }
+
+  /**
+   * Change the PDF options.
+   * 
+   * @param opts RenderPdfOpts
+   */
+  setPdfOpts(opts: any): void {
+    this[kObject].set_pdf_opts(opts);
+  }
 }
 
 /**
@@ -342,6 +351,15 @@ export interface TypstCompiler {
    * This is intended to optimize the performance of the compiler.
    */
   reset(): Promise<void>;
+
+  /**
+   *  Set PDF compilation options.
+   * Note: This must be called before init() to take effect during compiler build.
+   * @param {any} opts - The PDF options to set.
+   */
+  setPdfOpts(opts: any): void;
+
+  setPdfOptsForNextCompile(opts: any): void;
 
   /**
    * Compile an document with the maintained state.
@@ -502,6 +520,7 @@ export class TypstFontBuilderDriver implements TypstFontBuilder {
 class TypstCompilerDriver implements TypstCompiler {
   compiler: typst.TypstCompiler;
   compilerJs: typeof typst;
+  private pdfOpts: any;
 
   static defaultAssets = ['text' as const];
 
@@ -533,7 +552,26 @@ class TypstCompilerDriver implements TypstCompiler {
         'TypstCompiler: no font loader found, please use font loaders, e.g. loadFonts or preloadSystemFonts',
       );
     }
-    this.compiler = await buildComponent(options, gCompilerModule(this.compilerJs), TypstCompilerBuilder, {});
+
+    const hooks: ComponentBuildHooks = {};
+    if (this.pdfOpts) {
+      hooks.latelyBuild = (ctx: any) => {
+        ctx.builder.set_pdf_opts(this.pdfOpts);
+      };
+    }
+
+    this.compiler = await buildComponent(options, gCompilerModule(this.compilerJs), TypstCompilerBuilder, hooks);
+  }
+
+  setPdfOpts(opts: any): void {
+    if (this.compiler) {
+      throw new Error('setPdfOpts must be called before init()');
+    }
+    this.pdfOpts = opts;
+  }
+
+  setPdfOptsForNextCompile(opts: any): void {
+    this.pdfOpts = opts;
   }
 
   setFonts(fonts: TypstFontResolver): void {
@@ -547,6 +585,11 @@ class TypstCompilerDriver implements TypstCompiler {
         options.mainFilePath,
         convertInputs(options.inputs),
       );
+
+      if (this.pdfOpts) {
+        world.set_pdf_opts(this.pdfOpts);
+      }
+
       if ('incrementalServer' in options) {
         resolve(
           world.incr_compile(
