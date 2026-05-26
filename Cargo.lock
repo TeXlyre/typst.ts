@@ -3669,6 +3669,7 @@ dependencies = [
  "reflexo-typst2vec",
  "reflexo-vec2canvas",
  "typst",
+ "xmlparser",
 ]
 
 [[package]]
