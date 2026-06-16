@@ -8,7 +8,11 @@ pub use crate::builder::TypstFontResolver;
 pub use reflexo_typst::*;
 
 use core::fmt;
-use std::{fmt::Write, path::Path, sync::Arc};
+use std::{
+    fmt::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use error::TypstSourceDiagnostic;
 use font::cache::FontInfoCache;
@@ -38,6 +42,34 @@ use incr::IncrServer;
 /// main.typ:2:9-3:15: error: unexpected type in `+` application
 /// ```
 struct UnixFmt(DiagMessage);
+
+fn select_entry_in_workspace(
+    entry: reflexo_typst::EntryState,
+    main_file_path: &str,
+) -> Result<reflexo_typst::EntryState, JsValue> {
+    let path = Path::new(main_file_path);
+    let Some(root) = entry.root() else {
+        return Ok(entry.select_in_workspace(path));
+    };
+
+    let path = path.strip_prefix(&root).map_err(|err| {
+        error_once!(
+            "entry file is not in workspace",
+            err: err,
+            entry: path.display(),
+            root: root.display()
+        )
+    })?;
+    let path = root_relative_to_virtual(path)?;
+    Ok(entry.select_in_workspace(&path))
+}
+
+fn root_relative_to_virtual(path: &Path) -> Result<PathBuf, JsValue> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| error_once!("entry file path must be utf-8", path: path.display()))?;
+    Ok(PathBuf::from(format!("/{}", path.trim_start_matches('/'))))
+}
 
 impl fmt::Display for UnixFmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -230,12 +262,9 @@ impl TypstCompiler {
         let src = world.source(src).unwrap();
 
         let mut cursor = std::io::Cursor::new(Vec::new());
-        reflexo_typst::dump_ast(
-            &src.id().vpath().as_rootless_path().display().to_string(),
-            &src,
-            &mut cursor,
-        )
-        .map_err(|e| format!("{e:?}"))?;
+        let id = src.id();
+        let path = id.vpath().get_without_slash();
+        reflexo_typst::dump_ast(path, &src, &mut cursor).map_err(|e| format!("{e:?}"))?;
         let data = cursor.into_inner();
 
         let converted = ansi_to_html::convert(
@@ -316,9 +345,7 @@ impl TypstCompiler {
         };
 
         let entry = if let Some(main_file_path) = main_file_path {
-            entry
-                .try_select_path_in_workspace(Path::new(&main_file_path))?
-                .ok_or_else(|| error_once!("failed to select path", path: main_file_path))?
+            select_entry_in_workspace(entry, &main_file_path)?
         } else {
             entry.clone()
         };
@@ -529,7 +556,7 @@ impl TypstCompileWorld {
         Ok(())
     }
 
-    fn get_diag<D: TypstDocumentTrait + Send + Sync + 'static>(
+    fn get_diag<D: TypstDocumentTrait + typst::foundations::Output + Send + Sync + 'static>(
         &self,
         diagnostics_format: u8,
     ) -> Result<JsValue, JsValue> {
@@ -573,7 +600,7 @@ impl TypstCompileWorld {
         })
     }
 
-    fn get_doc_t<D: TypstDocumentTrait + Send + Sync + 'static>(
+    fn get_doc_t<D: TypstDocumentTrait + typst::foundations::Output + Send + Sync + 'static>(
         &self,
     ) -> Result<Option<Arc<D>>, JsValue> {
         // todo: don't coupled me with compilation.
@@ -629,8 +656,10 @@ pub struct TDiagnosticsTask<D> {
     _phantom: std::marker::PhantomData<D>,
 }
 
-impl<F: CompilerFeat, D: typst::TypstDocumentTrait + Send + Sync + 'static> WorldComputable<F>
-    for TDiagnosticsTask<D>
+impl<
+        F: CompilerFeat,
+        D: typst::TypstDocumentTrait + typst::foundations::Output + Send + Sync + 'static,
+    > WorldComputable<F> for TDiagnosticsTask<D>
 {
     type Output = Self;
 
