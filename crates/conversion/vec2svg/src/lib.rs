@@ -3,7 +3,7 @@
 // todo: https://github.com/typst/typst/pull/2610
 // color export
 
-use reflexo::typst::TypstPagedDocument;
+use reflexo::typst::{TypstDocumentTrait, TypstPagedDocument};
 
 /// re-export the core types.
 pub use reflexo_typst2vec::font::{FontGlyphProvider, GlyphProvider, IGlyphProvider};
@@ -21,9 +21,11 @@ pub use backend::SvgText;
 /// the document.
 pub(crate) mod frontend;
 pub use frontend::{
+    svg_gradient_def, svg_gradient_def_ref, GradientDefRef, SVGGradientDef, SvgExporter, SvgTask,
+};
+pub use frontend::{
     DynamicLayoutSvgExporter, IncrSvgDocClient, IncrSvgDocServer, IncrementalRenderContext,
 };
-pub use frontend::{SvgExporter, SvgTask};
 
 /// Useful transform for SVG Items.
 pub(crate) mod transform;
@@ -115,7 +117,7 @@ pub fn render_svg_html<Feat: ExportFeature>(output: &TypstPagedDocument) -> Stri
     html.push(r#"<!DOCTYPE html><html><head><meta charset="utf-8" /><title>"#.into());
     html.push(SvgText::Plain(
         output
-            .info
+            .info()
             .title
             .as_ref()
             .map(|s| s.to_string())

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use reflexo_typst::config::entry::{EntryOpts, MEMORY_MAIN_ENTRY};
 use reflexo_typst::config::CompileOpts;
 use reflexo_typst::path::PathClean;
+use reflexo_typst::typst_shim::syntax::VirtualPathExt;
 use reflexo_typst::DynSystemComputation;
 use reflexo_typst::{
     CompilationHandle, CompileActor, CompileServerOpts, CompilerFeat, DynComputation, EntryManager,
@@ -67,6 +68,7 @@ pub fn resolve_universe(args: CompileOnceArgs) -> TypstSystemUniverse {
         entry: EntryOpts::new_workspace(workspace_dir.clone()),
         inputs,
         font_paths: args.font.paths.clone(),
+        no_system_fonts: args.font.ignore_system_fonts,
         with_embedded_fonts: fonts()
             .map(Cow::Borrowed)
             .chain(args.extra_embedded_fonts)
@@ -80,7 +82,7 @@ pub fn resolve_universe(args: CompileOnceArgs) -> TypstSystemUniverse {
 
         let entry = verse
             .entry_state()
-            .select_in_workspace(MEMORY_MAIN_ENTRY.vpath().as_rooted_path());
+            .select_in_workspace(MEMORY_MAIN_ENTRY.vpath().as_rooted_path_compat());
         verse.mutate_entry(entry).unwrap();
 
         let src = read_from_stdin()

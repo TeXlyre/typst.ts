@@ -161,6 +161,7 @@ fn list_fonts(command: ListFontsArgs) -> ! {
     let verse = TypstSystemUniverse::new(CompileOpts {
         entry: EntryOpts::new_workspace(root_path.as_path().into()),
         font_paths: command.font.paths,
+        no_system_fonts: command.font.ignore_system_fonts,
         with_embedded_fonts: fonts().map(Cow::Borrowed).collect(),
         ..CompileOpts::default()
     })
@@ -170,7 +171,11 @@ fn list_fonts(command: ListFontsArgs) -> ! {
     for (name, infos) in world.book().families() {
         println!("{name}");
         if command.variants {
-            for info in infos {
+            for index in infos {
+                let info = world
+                    .book()
+                    .info(index)
+                    .expect("font index should be valid");
                 let FontVariant {
                     style,
                     weight,

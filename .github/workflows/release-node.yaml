@@ -1,12 +1,17 @@
 name: reflexo::release_node
 on:
-  release:
-    types: [created]
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: GitHub Release tag used for typst.node assets
+        required: true
+        type: string
 env:
   DEBUG: napi:*
   APP_NAME: typst-ts-node-compiler
   MACOSX_DEPLOYMENT_TARGET: '10.13'
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+  YARN_REGISTRY: https://registry.npmjs.org/
 permissions:
   contents: write
   id-token: write
@@ -69,6 +74,8 @@ jobs:
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Setup node
         uses: actions/setup-node@v4
         if: ${{ !matrix.settings.docker }}
@@ -190,6 +197,8 @@ jobs:
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Setup node
         uses: actions/setup-node@v4
         with:
@@ -221,6 +230,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Setup node
         uses: actions/setup-node@v4
         with:
@@ -252,6 +263,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Setup node
         uses: actions/setup-node@v4
         with:
@@ -285,6 +298,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -319,6 +334,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
   #     - name: Download artifacts
   #       uses: actions/download-artifact@v4
   #       with:
@@ -357,6 +374,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -385,6 +404,8 @@ jobs:
   publish:
     name: Publish
     runs-on: ubuntu-latest
+    environment:
+      name: npm-publish
     needs:
       # - build-freebsd
       - test-macOS-windows-binding
@@ -395,11 +416,18 @@ jobs:
       - test-linux-arm-gnueabihf-binding
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.14.0
           cache: yarn
+      - name: Upgrade npm and yarn
+        run: |
+          npm install -g npm@11.5.1 yarn@1.22.22
+          npm --version
+          yarn --version
       - name: Install dependencies
         run: yarn install
       - name: Download all artifacts
@@ -414,6 +442,8 @@ jobs:
           cp artifacts/bindings-x86_64-unknown-linux-gnu/index.d.ts index.d.ts
           cp artifacts/bindings-x86_64-unknown-linux-gnu/index-napi.js index-napi.js
           cp artifacts/bindings-x86_64-unknown-linux-gnu/index-napi.d.ts index-napi.d.ts
+      - name: Prepare package manifests
+        run: yarn prepare-publish:napi
       - name: List packages
         run: ls -R ./npm
         shell: bash
@@ -428,10 +458,8 @@ jobs:
           path: packages/typst.node/myriaddreamin-typst-ts-node-compiler.tar.gz
       - name: Publish
         run: |
-          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-          yarn prepublish:napi --no-gh-release
-          node scripts/publish.js
-          npm publish --verbose --provenance --access public || exit 0
+          node scripts/publish.js "${{ inputs.tag }}"
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}

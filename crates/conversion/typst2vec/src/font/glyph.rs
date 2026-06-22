@@ -4,8 +4,10 @@ use std::{ops::Deref, sync::Arc};
 
 use reflexo::hash::{item_hash128, HashedTrait, StaticHash128};
 use reflexo::ImmutStr;
+use skrifa::outline::{DrawSettings, OutlinePen};
+use skrifa::{FontRef as SkrifaFontRef, MetadataProvider};
 use typst::foundations::{Bytes, Smart};
-use typst::text::Font;
+use typst::text::FontInstance;
 use typst::visualize::{ExchangeFormat, Image as TypstImage, RasterImage};
 
 use super::ligature::resolve_ligature;
@@ -13,29 +15,34 @@ use super::ligature::resolve_ligature;
 pub use ttf_parser::GlyphId;
 
 /// IGlyphProvider extracts the font data from the font.
-/// Note (Possibly block unsafe): If a [`Font`] is dummy (lazy loaded),
+/// Note (Possibly block unsafe): If a [`FontInstance`] is dummy (lazy loaded),
 ///   it will block current thread and fetch the font data from the server.
 pub trait IGlyphProvider {
     /// With font with glyph id, return the raw ligature string.
     /// See [`FontGlyphProvider::ligature_glyph`] for the default
     /// implementation.
-    fn ligature_glyph(&self, font: &Font, id: GlyphId) -> Option<ImmutStr>;
+    fn ligature_glyph(&self, font: &FontInstance, id: GlyphId) -> Option<ImmutStr>;
 
     /// With font with glyph id, return the svg document data.
     /// Note: The returned data is possibly compressed.
     /// See [`FontGlyphProvider::svg_glyph`] for the default implementation.
-    fn svg_glyph(&self, font: &Font, id: GlyphId) -> Option<Arc<[u8]>>;
+    fn svg_glyph(&self, font: &FontInstance, id: GlyphId) -> Option<Arc<[u8]>>;
 
     /// With font with glyph id, return the bitmap image data.
     /// Optionally, with given ppem, return the best fit bitmap image.
     /// Return the best quality bitmap image if ppem is [`std::u16::MAX`].
     /// See [`FontGlyphProvider::bitmap_glyph`] for the default implementation.
-    fn bitmap_glyph(&self, font: &Font, id: GlyphId, ppem: u16) -> Option<(TypstImage, i16, i16)>;
+    fn bitmap_glyph(
+        &self,
+        font: &FontInstance,
+        id: GlyphId,
+        ppem: u16,
+    ) -> Option<(TypstImage, i16, i16)>;
 
     /// With font with glyph id, return the outline path data.
     /// The returned data is in Path2D format.
     /// See [`FontGlyphProvider::outline_glyph`] for the default implementation.
-    fn outline_glyph(&self, font: &Font, id: GlyphId) -> Option<String>;
+    fn outline_glyph(&self, font: &FontInstance, id: GlyphId) -> Option<String>;
 }
 
 #[derive(Clone)]
@@ -83,12 +90,12 @@ pub struct FontGlyphProvider {}
 
 impl IGlyphProvider for FontGlyphProvider {
     /// See [`IGlyphProvider::ligature_glyph`] for more information.
-    fn ligature_glyph(&self, font: &Font, id: GlyphId) -> Option<ImmutStr> {
+    fn ligature_glyph(&self, font: &FontInstance, id: GlyphId) -> Option<ImmutStr> {
         resolve_ligature(font, id)
     }
 
     /// See [`IGlyphProvider::svg_glyph`] for more information.
-    fn svg_glyph(&self, font: &Font, id: GlyphId) -> Option<Arc<[u8]>> {
+    fn svg_glyph(&self, font: &FontInstance, id: GlyphId) -> Option<Arc<[u8]>> {
         let font_face = font.ttf();
 
         Some(font_face.glyph_svg_image(id)?.data.into())
@@ -97,7 +104,12 @@ impl IGlyphProvider for FontGlyphProvider {
     /// See [`IGlyphProvider::bitmap_glyph`] for more information.
     /// Note: It converts the data into [`typst::visualize::Image`] and
     /// introduces overhead.
-    fn bitmap_glyph(&self, font: &Font, id: GlyphId, ppem: u16) -> Option<(TypstImage, i16, i16)> {
+    fn bitmap_glyph(
+        &self,
+        font: &FontInstance,
+        id: GlyphId,
+        ppem: u16,
+    ) -> Option<(TypstImage, i16, i16)> {
         let font_face = font.ttf();
 
         let raster = font_face.glyph_raster_image(id, ppem)?;
@@ -126,13 +138,28 @@ impl IGlyphProvider for FontGlyphProvider {
     }
 
     /// See [`IGlyphProvider::outline_glyph`] for more information.
-    fn outline_glyph(&self, font: &Font, id: GlyphId) -> Option<String> {
-        let font_face = font.ttf();
+    fn outline_glyph(&self, font: &FontInstance, id: GlyphId) -> Option<String> {
+        let font_ref =
+            SkrifaFontRef::from_index(font.font().data().as_slice(), font.font().index()).ok()?;
+        let variations: Vec<_> = font
+            .variations()
+            .0
+            .iter()
+            .map(|(tag, value)| (skrifa::Tag::new(&tag.to_bytes()), value.0))
+            .collect();
+        let location = font_ref.axes().location(variations.iter().copied());
+        let glyph = font_ref
+            .outline_glyphs()
+            .get(skrifa::GlyphId::new(id.0.into()))?;
 
-        // todo: handling no such glyph
         let mut builder = SvgOutlineBuilder(String::new());
-        font_face.outline_glyph(id, &mut builder)?;
-        Some(builder.0)
+        glyph
+            .draw(
+                DrawSettings::unhinted(skrifa::instance::Size::unscaled(), &location),
+                &mut builder,
+            )
+            .ok()?;
+        (!builder.0.is_empty()).then_some(builder.0)
     }
 }
 
@@ -143,19 +170,19 @@ pub struct DummyFontGlyphProvider {}
 
 impl IGlyphProvider for DummyFontGlyphProvider {
     /// See [`IGlyphProvider::ligature_glyph`] for more information.
-    fn ligature_glyph(&self, _font: &Font, _id: GlyphId) -> Option<ImmutStr> {
+    fn ligature_glyph(&self, _font: &FontInstance, _id: GlyphId) -> Option<ImmutStr> {
         None
     }
 
     /// See [`IGlyphProvider::svg_glyph`] for more information.
-    fn svg_glyph(&self, _font: &Font, _id: GlyphId) -> Option<Arc<[u8]>> {
+    fn svg_glyph(&self, _font: &FontInstance, _id: GlyphId) -> Option<Arc<[u8]>> {
         None
     }
 
     /// See [`IGlyphProvider::bitmap_glyph`] for more information.
     fn bitmap_glyph(
         &self,
-        _font: &Font,
+        _font: &FontInstance,
         _id: GlyphId,
         _ppem: u16,
     ) -> Option<(TypstImage, i16, i16)> {
@@ -163,7 +190,7 @@ impl IGlyphProvider for DummyFontGlyphProvider {
     }
 
     /// See [`IGlyphProvider::outline_glyph`] for more information.
-    fn outline_glyph(&self, _font: &Font, _id: GlyphId) -> Option<String> {
+    fn outline_glyph(&self, _font: &FontInstance, _id: GlyphId) -> Option<String> {
         None
     }
 }
@@ -171,7 +198,7 @@ impl IGlyphProvider for DummyFontGlyphProvider {
 #[derive(Default)]
 struct SvgOutlineBuilder(pub String);
 
-impl ttf_parser::OutlineBuilder for SvgOutlineBuilder {
+impl OutlinePen for SvgOutlineBuilder {
     fn move_to(&mut self, x: f32, y: f32) {
         write!(&mut self.0, "M {x} {y} ").unwrap();
     }

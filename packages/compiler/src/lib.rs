@@ -230,12 +230,9 @@ impl TypstCompiler {
         let src = world.source(src).unwrap();
 
         let mut cursor = std::io::Cursor::new(Vec::new());
-        reflexo_typst::dump_ast(
-            &src.id().vpath().as_rootless_path().display().to_string(),
-            &src,
-            &mut cursor,
-        )
-        .map_err(|e| format!("{e:?}"))?;
+        let id = src.id();
+        let path = id.vpath().get_without_slash();
+        reflexo_typst::dump_ast(path, &src, &mut cursor).map_err(|e| format!("{e:?}"))?;
         let data = cursor.into_inner();
 
         let converted = ansi_to_html::convert(
@@ -529,7 +526,7 @@ impl TypstCompileWorld {
         Ok(())
     }
 
-    fn get_diag<D: TypstDocumentTrait + Send + Sync + 'static>(
+    fn get_diag<D: TypstDocumentTrait + typst::foundations::Output + Send + Sync + 'static>(
         &self,
         diagnostics_format: u8,
     ) -> Result<JsValue, JsValue> {
@@ -573,7 +570,7 @@ impl TypstCompileWorld {
         })
     }
 
-    fn get_doc_t<D: TypstDocumentTrait + Send + Sync + 'static>(
+    fn get_doc_t<D: TypstDocumentTrait + typst::foundations::Output + Send + Sync + 'static>(
         &self,
     ) -> Result<Option<Arc<D>>, JsValue> {
         // todo: don't coupled me with compilation.
@@ -629,8 +626,10 @@ pub struct TDiagnosticsTask<D> {
     _phantom: std::marker::PhantomData<D>,
 }
 
-impl<F: CompilerFeat, D: typst::TypstDocumentTrait + Send + Sync + 'static> WorldComputable<F>
-    for TDiagnosticsTask<D>
+impl<
+        F: CompilerFeat,
+        D: typst::TypstDocumentTrait + typst::foundations::Output + Send + Sync + 'static,
+    > WorldComputable<F> for TDiagnosticsTask<D>
 {
     type Output = Self;
 

@@ -1,0 +1,452 @@
+name: release::orchestrate
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: GitHub Release tag used by the typst.node release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+  YARN_REGISTRY: https://registry.npmjs.org/
+
+concurrency:
+  group: release-orchestrate-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  verify-packages:
+    name: Verify generic workspace packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout test assets
+        uses: actions/checkout@v4
+        with:
+          repository: Myriad-Dreamin/typst
+          ref: assets-files
+          path: assets/files
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.92.0
+          target: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | bash
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: yarn
+
+      - name: Upgrade npm and yarn
+        run: |
+          npm install -g npm@11.5.1 yarn@1.22.22
+          npm --version
+          yarn --version
+
+      - name: Install workspace dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: yarn workspace @myriaddreamin/typst.ts test-install
+
+      - name: Prepare corpus artifacts
+        run: yarn run corpus
+
+      - name: Build generic workspace packages
+        run: |
+          yarn build:pkg
+
+      - name: Verify generic workspace package dry-runs
+        env:
+          NPM_CONFIG_FORCE: 'true'
+        run: |
+          yarn turbo run prepublish publish:dry \
+            --filter=./packages/compiler \
+            --filter=./packages/parser \
+            --filter=./packages/renderer \
+            --filter=./packages/typst-all-in-one.ts \
+            --filter=./packages/typst.angular \
+            --filter=./packages/typst.react \
+            --filter=./packages/typst.solid \
+            --filter=./packages/typst.svelte \
+            --filter=./packages/typst.ts \
+            --filter=./packages/typst.vue3
+
+      - name: Summarize generic workspace packages
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Verified generic workspace packages
+
+          Included packages
+          - `@myriaddreamin/typst-ts-web-compiler` (`packages/compiler`)
+          - `@myriaddreamin/typst-ts-parser` (`packages/parser`)
+          - `@myriaddreamin/typst-ts-renderer` (`packages/renderer`)
+          - `@myriaddreamin/typst-all-in-one.ts` (`packages/typst-all-in-one.ts`)
+          - `@myriaddreamin/typst.angular` (`packages/typst.angular`)
+          - `@myriaddreamin/typst.react` (`packages/typst.react`)
+          - `@myriaddreamin/typst.solid` (`packages/typst.solid`)
+          - `@myriaddreamin/typst.svelte` (`packages/typst.svelte`)
+          - `@myriaddreamin/typst.ts` (`packages/typst.ts`)
+          - `@myriaddreamin/typst.vue3` (`packages/typst.vue3`)
+
+          Skipped packages
+          - `@myriaddreamin/typst-ts-node-compiler` (`packages/typst.node`): Published by the dedicated typst.node workflow because it has a separate multi-platform release path.
+          - `enhanced-typst-svg` (`packages/enhanced-typst-svg`): Private package outside the generic workspace npm release scope.
+          EOF
+
+  verify-projects:
+    name: Verify publishable project batch
+    needs:
+      - verify-packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.92.0
+          target: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | bash
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: yarn
+
+      - name: Upgrade npm and yarn
+        run: |
+          npm install -g npm@11.5.1 yarn@1.22.22
+          npm --version
+          yarn --version
+
+      - name: Install workspace dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build typst.node for project type checks
+        run: yarn --cwd packages/typst.node build --target x86_64-unknown-linux-gnu
+
+      - name: Build parser for project packages
+        run: yarn --cwd packages/parser build
+
+      - name: Build publishable npm projects
+        run: |
+          yarn --cwd projects/vite-plugin-typst build
+          yarn --cwd projects/highlighter build
+
+      - name: Verify publishable npm project dry-runs
+        env:
+          NPM_CONFIG_FORCE: 'true'
+        run: |
+          yarn --cwd projects/hexo-renderer-typst publish:dry
+          yarn --cwd projects/rehype-typst publish:dry
+          yarn --cwd projects/vite-plugin-typst publish:dry
+          yarn --cwd projects/highlighter publish:dry
+
+      - name: Verify Cargo project dry-run
+        run: |
+          cargo publish --dry-run --manifest-path projects/rustdoc-typst-demo/Cargo.toml
+
+      - name: Summarize verified project batch
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Verified project release batch
+
+          Verified npm projects
+          - `hexo-renderer-typst` (`projects/hexo-renderer-typst`)
+          - `@myriaddreamin/rehype-typst` (`projects/rehype-typst`)
+          - `@myriaddreamin/vite-plugin-typst` (`projects/vite-plugin-typst`) after its build step
+          - `@myriaddreamin/highlighter-typst` (`projects/highlighter`) after its build step
+
+          Verified Cargo projects
+          - `rustdoc-typst-demo` (`projects/rustdoc-typst-demo`) with `cargo publish --dry-run`
+
+          Skipped project entries
+          - `@myriaddreamin/vistyp` (`projects/vistyp`): Private project outside the versioned release batch.
+          EOF
+
+  publish-packages:
+    name: Publish generic workspace packages
+    needs:
+      - verify-packages
+      - verify-projects
+    if: ${{ inputs.tag != 'dry-run' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: npm-publish
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout test assets
+        uses: actions/checkout@v4
+        with:
+          repository: Myriad-Dreamin/typst
+          ref: assets-files
+          path: assets/files
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.92.0
+          target: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | bash
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: yarn
+
+      - name: Upgrade npm and yarn
+        run: |
+          npm install -g npm@11.5.1 yarn@1.22.22
+          npm --version
+          yarn --version
+
+      - name: Install workspace dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: yarn workspace @myriaddreamin/typst.ts test-install
+
+      - name: Prepare corpus artifacts
+        run: yarn run corpus
+
+      - name: Publish generic workspace packages
+        run: |
+          yarn build:pkg
+          yarn turbo run prepublish \
+            --filter=./packages/compiler \
+            --filter=./packages/parser \
+            --filter=./packages/renderer \
+            --filter=./packages/typst-all-in-one.ts \
+            --filter=./packages/typst.angular \
+            --filter=./packages/typst.react \
+            --filter=./packages/typst.solid \
+            --filter=./packages/typst.svelte \
+            --filter=./packages/typst.ts \
+            --filter=./packages/typst.vue3
+          node scripts/npm-publish-if-needed.mjs \
+            packages/compiler \
+            packages/parser \
+            packages/renderer \
+            packages/typst-all-in-one.ts \
+            packages/typst.angular/dist/typst.angular \
+            packages/typst.react \
+            packages/typst.solid \
+            packages/typst.svelte \
+            packages/typst.ts \
+            packages/typst.vue3
+
+      - name: Summarize generic workspace packages
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Published generic workspace packages
+
+          Already-published package versions are treated as complete.
+
+          Protected environment: `npm-publish`
+          EOF
+
+  publish-typst-node:
+    needs:
+      - publish-packages
+    if: ${{ inputs.tag != 'dry-run' }}
+    permissions:
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/release-node.yaml
+    with:
+      tag: ${{ inputs.tag }}
+    secrets: inherit
+
+  publish-npm-projects:
+    name: Publish npm project batch
+    needs:
+      - publish-typst-node
+    if: ${{ inputs.tag != 'dry-run' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: npm-publish
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.92.0
+          target: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | bash
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: yarn
+
+      - name: Upgrade npm and yarn
+        run: |
+          npm install -g npm@11.5.1 yarn@1.22.22
+          npm --version
+          yarn --version
+
+      - name: Install workspace dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Download typst.node build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: bindings-x86_64-unknown-linux-gnu
+          path: packages/typst.node
+
+      - name: Build parser for project packages
+        run: yarn --cwd packages/parser build
+
+      - name: Publish npm project batch
+        run: |
+          yarn --cwd projects/vite-plugin-typst build
+          yarn --cwd projects/highlighter build
+          node scripts/npm-publish-if-needed.mjs \
+            projects/hexo-renderer-typst \
+            projects/rehype-typst \
+            projects/vite-plugin-typst \
+            projects/highlighter
+
+      - name: Summarize npm project publish batch
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Published npm project release batch
+
+          Already-published package versions are treated as complete.
+
+          Published npm projects
+          - `hexo-renderer-typst` (`projects/hexo-renderer-typst`)
+          - `@myriaddreamin/rehype-typst` (`projects/rehype-typst`)
+          - `@myriaddreamin/vite-plugin-typst` (`projects/vite-plugin-typst`) after rebuilding its publish artifacts
+          - `@myriaddreamin/highlighter-typst` (`projects/highlighter`) after rebuilding its publish artifacts
+
+          Skipped project entries
+          - `@myriaddreamin/vistyp` (`projects/vistyp`): Private project outside the versioned release batch.
+
+          Protected environment: `npm-publish`
+          EOF
+
+  publish-cargo-projects:
+    name: Publish Cargo project batch
+    needs:
+      - publish-typst-node
+    if: ${{ inputs.tag != 'dry-run' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.92.0
+
+      - name: Publish Cargo project batch
+        shell: bash
+        run: |
+          publish_project() {
+            local manifest="$1"
+
+            set +e
+            output=$(cargo publish --manifest-path "$manifest" 2>&1)
+            status=$?
+            set -e
+
+            echo "$output"
+
+            if [ $status -eq 0 ]; then
+              return 0
+            fi
+
+            if echo "$output" | grep -Eqi 'already exists on crates\.io|already uploaded|has already been uploaded'; then
+              echo "Skipping already published Cargo project for $manifest"
+              return 0
+            fi
+
+            return $status
+          }
+
+          publish_project projects/rustdoc-typst-demo/Cargo.toml
+
+      - name: Summarize Cargo project publish batch
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Published Cargo project release batch
+
+          Published Cargo projects
+          - `rustdoc-typst-demo` (`projects/rustdoc-typst-demo`)
+
+          Skipped project entries
+          - `@myriaddreamin/vistyp` (`projects/vistyp`): Private project outside the versioned release batch.
+          EOF
+
+  publish-docker:
+    needs:
+      - publish-npm-projects
+      - publish-cargo-projects
+    if: ${{ inputs.tag != 'dry-run' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker.yaml
+    secrets: inherit
+
+  publish-crates:
+    needs:
+      - publish-docker
+    if: ${{ inputs.tag != 'dry-run' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reelase-crates.yaml
+    secrets: inherit

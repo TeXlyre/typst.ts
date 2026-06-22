@@ -15,6 +15,7 @@ use std::{
 };
 
 use clap::{builder::ValueParser, ArgAction, Args, Command, Parser, Subcommand, ValueEnum};
+use reflexo_typst::typst_shim::syntax::VirtualPathExt;
 use reflexo_typst::{
     build_info::VERSION, vfs::WorkspaceResolver, DiagnosticHandler, ImmutPath, TypstFileId,
     MEMORY_MAIN_ENTRY,
@@ -117,6 +118,11 @@ pub struct FontArgs {
         value_delimiter = ENV_PATH_SEP,
     )]
     pub paths: Vec<PathBuf>,
+
+    /// Ensures system fonts won't be searched, unless explicitly included via
+    /// `--font-path`.
+    #[clap(long = "ignore-system-fonts", env = "TYPST_IGNORE_SYSTEM_FONTS")]
+    pub ignore_system_fonts: bool,
 }
 
 #[derive(Default, Debug, Clone, Parser)]
@@ -194,8 +200,8 @@ impl CompileOnceArgs {
                     current_dir().join(entry)
                 };
 
-                let path = match entry.strip_prefix(root) {
-                    Ok(rel) => VirtualPath::new(rel),
+                let path = match VirtualPath::virtualize(root, &entry) {
+                    Ok(path) => path,
                     Err(_) => clap::Error::raw(
                         clap::error::ErrorKind::InvalidValue,
                         format!(
@@ -221,7 +227,7 @@ impl CompileOnceArgs {
                 } else {
                     input
                         .vpath()
-                        .as_rooted_path()
+                        .as_rooted_path_compat()
                         .parent()
                         .unwrap_or_else(|| {
                             clap::Error::raw(
@@ -438,8 +444,9 @@ pub struct GenPackagesDocArgs {
 }
 
 /// Which format to use for diagnostics.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, ValueEnum)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, ValueEnum, Default)]
 pub enum DiagnosticFormat {
+    #[default]
     Human,
     Short,
 }
@@ -450,12 +457,6 @@ impl From<DiagnosticFormat> for reflexo_typst::DiagnosticFormat {
             DiagnosticFormat::Human => Self::Human,
             DiagnosticFormat::Short => Self::Short,
         }
-    }
-}
-
-impl Default for DiagnosticFormat {
-    fn default() -> Self {
-        Self::Human
     }
 }
 

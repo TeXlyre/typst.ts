@@ -18,8 +18,9 @@ use reflexo_typst2vec::{
     IntoTypst, TryIntoTypst,
 };
 use typst::{
+    foundations::Smart,
     layout::{Angle, Quadrant},
-    visualize::{Color, ColorSpace, Hsl, Hsv, WeightedColor},
+    visualize::{Color, ColorSpace, WeightedColor},
 };
 
 use crate::{
@@ -39,6 +40,23 @@ impl<Feat: ExportFeature> Default for SvgExporter<Feat> {
         }
     }
 }
+
+pub struct SVGGradientDef<'a> {
+    pub id: Fingerprint,
+    pub gradient: &'a GradientItem,
+    pub aspect_ratio: Option<f32>,
+}
+
+/// A gradient definition to emit into SVG defs.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct GradientDefRef {
+    pub id: Fingerprint,
+    pub item: Fingerprint,
+    pub aspect_ratio: Option<Scalar>,
+}
+
+/// Maps gradient definition id to its source paint and aspect override.
+pub type GradientDefMap = HashSet<GradientDefRef>;
 
 impl<Feat: ExportFeature> SvgExporter<Feat> {
     /// Get header by pages.
@@ -83,28 +101,22 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
     /// <svg> <defs> <gradient/> </defs> .. </svg>
     ///              ^^^^^^^^^^^
     pub fn gradients<'a>(
-        gradients: impl Iterator<Item = (&'a Fingerprint, &'a GradientItem)>,
+        gradients: impl Iterator<Item = SVGGradientDef<'a>>,
         svg: &mut Vec<SvgText>,
     ) {
         let mut sub_gradients = HashSet::<(Fingerprint, SVGSubGradient)>::default();
 
         // todo: aspect ratio
-        for (id, gradient) in gradients {
+        for SVGGradientDef {
+            id,
+            gradient,
+            aspect_ratio,
+        } in gradients
+        {
             match &gradient.kind {
                 GradientKind::Linear(angle) => {
-                    // todo: use native angle
-                    let angle = typst::layout::Angle::rad(angle.0 as f64);
-
-                    // todo: correct aspect ratio
-                    // let angle = Gradient::correct_aspect_ratio(linear.angle, *ratio);
-                    let (sin, cos) = (angle.sin(), angle.cos());
-                    let length = sin.abs() + cos.abs();
-                    let (x1, y1, x2, y2) = match angle.quadrant() {
-                        Quadrant::First => (0.0, 0.0, cos * length, sin * length),
-                        Quadrant::Second => (1.0, 0.0, cos * length + 1.0, sin * length),
-                        Quadrant::Third => (1.0, 1.0, cos * length + 1.0, sin * length + 1.0),
-                        Quadrant::Fourth => (0.0, 1.0, cos * length, sin * length + 1.0),
-                    };
+                    let (x1, y1, x2, y2) =
+                        linear_gradient_points(angle.0, gradient_aspect_ratio(aspect_ratio));
 
                     svg.push(SvgText::Plain(
                         format!(
@@ -148,11 +160,10 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
                         )
                     ));
 
-                    // The rotation angle, negated to match rotation in PNG.
-                    // todo: use native angle
-                    // let angle = Gradient::correct_aspect_ratio(angle, *ratio);
-                    // let angle = typst::geom::Angle::rad(angle.0 as f64);
-                    let angle: f32 = -(angle.0).rem_euclid(TAU);
+                    // Match typst-svg: the later pattern transform scales the
+                    // unit pattern to the paint size, so each segment boundary
+                    // is corrected with the inverse paint aspect ratio.
+                    let inverse_ratio = 1.0 / gradient_aspect_ratio(aspect_ratio);
                     let mut center = &Axes::new(Scalar(0.5), Scalar(0.5));
                     for s in &gradient.styles {
                         if let GradientStyle::Center(c) = s {
@@ -163,8 +174,8 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
                     // We build an arg segment for each segment of a circle.
                     let dtheta = TAU / CONIC_SEGMENT as f32;
                     for i in 0..CONIC_SEGMENT {
-                        let theta1 = dtheta * i as f32;
-                        let theta2 = dtheta * (i + 1) as f32;
+                        let (theta1, theta2) =
+                            conic_segment_angles(angle.0, dtheta, inverse_ratio, i);
 
                         // Create the path for the segment.
                         let mut builder = SvgPath2DBuilder::default();
@@ -173,8 +184,8 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
                             correct_pattern_pos(center.y.0),
                         );
                         builder.line_to(
-                            correct_pattern_pos(-2.0 * (theta1 + angle).cos() + center.x.0),
-                            correct_pattern_pos(2.0 * (theta1 + angle).sin() + center.y.0),
+                            correct_pattern_pos(-2.0 * theta1.cos() + center.x.0),
+                            correct_pattern_pos(2.0 * theta1.sin() + center.y.0),
                         );
                         builder.arc(
                             (2.0, 2.0),
@@ -182,8 +193,8 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
                             0,
                             1,
                             (
-                                correct_pattern_pos(-2.0 * (theta2 + angle).cos() + center.x.0),
-                                correct_pattern_pos(2.0 * (theta2 + angle).sin() + center.y.0),
+                                correct_pattern_pos(-2.0 * theta2.cos() + center.x.0),
+                                correct_pattern_pos(2.0 * theta2.sin() + center.y.0),
                             ),
                         );
                         builder.close();
@@ -192,8 +203,8 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
                         let t2 = (i + 1) as f32 / CONIC_SEGMENT as f32;
                         let subgradient = SVGSubGradient {
                             center: *center,
-                            t0: Angle::rad((theta1 + angle) as f64),
-                            t1: Angle::rad((theta2 + angle) as f64),
+                            t0: Angle::rad(theta1 as f64),
+                            t1: Angle::rad(theta2 as f64),
                             c0: sample_color_stops(gradient, t1),
                             c1: sample_color_stops(gradient, t2),
                         };
@@ -202,7 +213,7 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
 
                         svg.push(SvgText::Plain(format!(
                             r##"<path d="{}" fill="url(#{})" stroke="url(#{})" stroke-width="0" shape-rendering="optimizeSpeed"/>"##,
-                            builder.0,
+                            builder.path,
                             f.as_svg_id("g"),
                             f.as_svg_id("g"),
                         )));
@@ -289,14 +300,15 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
     }
 
     pub fn patterns(
-        patterns: impl Iterator<Item = (Fingerprint, Size, Arc<SvgTextNode>)>,
+        patterns: impl Iterator<Item = (Fingerprint, Size, Size, Arc<SvgTextNode>)>,
         svg: &mut Vec<SvgText>,
     ) {
-        for (id, size, pattern) in patterns {
+        for (id, size, offset, pattern) in patterns {
             svg.push(SvgText::Plain(format!(
-                r##"<pattern id="{}" patternUnits="userSpaceOnUse" width="{:.3}" height="{:.3}" viewBox="0 0 {:.3} {:.3}">"##,
+                r##"<pattern id="{}" patternUnits="userSpaceOnUse" width="{:.3}" height="{:.3}" x="{:.3}" y="{:.3}" viewBox="0 0 {:.3} {:.3}">"##,
                 id.as_svg_id("g"),
                 size.x.0, size.y.0,
+                offset.x.0, offset.y.0,
                 size.x.0, size.y.0,
             )));
 
@@ -327,15 +339,7 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
         let gradients = t
             .gradients
             .iter()
-            .filter_map(|id| match module.get_item(id) {
-                Some(VecItem::Gradient(g)) => Some((id, g.as_ref())),
-                _ => {
-                    // #[cfg(debug_assertions)]
-                    panic!("Invalid gradient reference: {}", id.as_svg_id("g"));
-                    #[allow(unreachable_code)]
-                    None
-                }
-            });
+            .map(|id| svg_gradient_def_ref(module, *id));
 
         let parts = parts.as_ref();
         let with_css = parts.is_none_or(|parts| parts.css);
@@ -385,6 +389,81 @@ impl<Feat: ExportFeature> SvgExporter<Feat> {
     }
 }
 
+pub fn svg_gradient_def(module: &Module, id: Fingerprint) -> SVGGradientDef<'_> {
+    svg_gradient_def_ref(
+        module,
+        GradientDefRef {
+            id,
+            item: id,
+            aspect_ratio: None,
+        },
+    )
+}
+
+pub fn svg_gradient_def_ref(module: &Module, def: GradientDefRef) -> SVGGradientDef<'_> {
+    let aspect_override = def.aspect_ratio.map(|ratio| ratio.0);
+    match module.get_item(&def.item) {
+        Some(VecItem::Gradient(g)) => SVGGradientDef {
+            id: def.id,
+            gradient: g.as_ref(),
+            aspect_ratio: aspect_override,
+        },
+        Some(VecItem::ColorTransform(g)) => match module.get_item(&g.item) {
+            Some(VecItem::Gradient(gradient)) => SVGGradientDef {
+                id: def.id,
+                gradient: gradient.as_ref(),
+                aspect_ratio: aspect_override.or_else(|| Some(transform_aspect_ratio(g.transform))),
+            },
+            _ => panic!("Invalid gradient reference: {}", g.item.as_svg_id("g")),
+        },
+        _ => panic!("Invalid gradient reference: {}", def.item.as_svg_id("g")),
+    }
+}
+
+fn transform_aspect_ratio(transform: ir::Transform) -> f32 {
+    let width = transform.sx.0.hypot(transform.ky.0);
+    let height = transform.kx.0.hypot(transform.sy.0);
+
+    if height == 0.0 {
+        1.0
+    } else {
+        width / height
+    }
+}
+
+fn gradient_aspect_ratio(aspect_ratio: Option<f32>) -> f32 {
+    aspect_ratio
+        .filter(|ratio| ratio.is_finite() && *ratio != 0.0)
+        .unwrap_or(1.0)
+}
+
+fn correct_aspect_ratio(angle: f32, aspect_ratio: f32) -> f32 {
+    (angle.sin() / aspect_ratio.abs())
+        .atan2(angle.cos())
+        .rem_euclid(TAU)
+}
+
+fn linear_gradient_points(angle: f32, aspect_ratio: f32) -> (f64, f64, f64, f64) {
+    let angle = Angle::rad(correct_aspect_ratio(angle, aspect_ratio) as f64);
+    let (sin, cos) = (angle.sin(), angle.cos());
+    let length = sin.abs() + cos.abs();
+    let (x1, y1) = match angle.quadrant() {
+        Quadrant::First => (0.0, 0.0),
+        Quadrant::Second => (1.0, 0.0),
+        Quadrant::Third => (1.0, 1.0),
+        Quadrant::Fourth => (0.0, 1.0),
+    };
+
+    (x1, y1, x1 + cos * length, y1 + sin * length)
+}
+
+fn conic_segment_angles(angle: f32, dtheta: f32, inverse_ratio: f32, i: usize) -> (f32, f32) {
+    (
+        -correct_aspect_ratio(angle + dtheta * i as f32, inverse_ratio),
+        -correct_aspect_ratio(angle + dtheta * (i + 1) as f32, inverse_ratio),
+    )
+}
+
 /// The task context for exporting svg.
 /// It is also as a namespace for all the functions used in the task.
 pub struct SvgTask<'a, Feat: ExportFeature> {
@@ -394,7 +473,7 @@ pub struct SvgTask<'a, Feat: ExportFeature> {
     /// Stores the style definitions used in the document.
     pub style_defs: StyleDefMap,
     /// Stores the gradient used in the document.
-    pub gradients: PaintFillMap,
+    pub gradients: GradientDefMap,
     /// Stores the patterns used in the document.
     pub patterns: PaintFillMap,
 
@@ -408,7 +487,7 @@ impl<Feat: ExportFeature> Default for SvgTask<'_, Feat> {
             fingerprint_builder: FingerprintBuilder::default(),
 
             style_defs: StyleDefMap::default(),
-            gradients: PaintFillMap::default(),
+            gradients: GradientDefMap::default(),
             patterns: PaintFillMap::default(),
 
             _feat_phantom: std::marker::PhantomData,
@@ -474,8 +553,8 @@ impl<Feat: ExportFeature> SvgTask<'_, Feat> {
 
     pub fn collect_patterns(
         &mut self,
-        render: impl Fn(&mut Self, &Fingerprint) -> Option<(Fingerprint, Size, Arc<SvgTextNode>)>,
-    ) -> Vec<(Fingerprint, Size, Arc<SvgTextNode>)> {
+        render: impl Fn(&mut Self, &Fingerprint) -> Option<(Fingerprint, Size, Size, Arc<SvgTextNode>)>,
+    ) -> Vec<(Fingerprint, Size, Size, Arc<SvgTextNode>)> {
         let mut used = std::mem::take(&mut self.patterns);
         let mut patterns = vec![];
 
@@ -510,14 +589,18 @@ fn correct_pattern_pos(x: f32) -> f32 {
 }
 
 #[derive(Default)]
-struct SvgPath2DBuilder(pub String);
+struct SvgPath2DBuilder {
+    path: String,
+    last_point: (f32, f32),
+    last_close_point: (f32, f32),
+}
 
 /// See: https://developer.mozilla.org/en-US/docs/Web/SVG/Tutorial/Paths
 impl SvgPath2DBuilder {
     #[allow(dead_code)]
     pub fn rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
         write!(
-            &mut self.0,
+            &mut self.path,
             "M {} {} H {} V {} H {} Z",
             x,
             y,
@@ -531,11 +614,24 @@ impl SvgPath2DBuilder {
 
 impl SvgPath2DBuilder {
     fn move_to(&mut self, x: f32, y: f32) {
-        write!(&mut self.0, "M {x} {y} ").unwrap();
+        let (dx, dy) = self.relative_pos((x, y));
+        if dx != 0.0 || dy != 0.0 {
+            write!(&mut self.path, "m {dx} {dy} ").unwrap();
+        }
+        self.last_point = (x, y);
+        self.last_close_point = (x, y);
     }
 
     fn line_to(&mut self, x: f32, y: f32) {
-        write!(&mut self.0, "L {x} {y} ").unwrap();
+        let (dx, dy) = self.relative_pos((x, y));
+        if dx != 0.0 && dy != 0.0 {
+            write!(&mut self.path, "l {dx} {dy} ").unwrap();
+        } else if dx != 0.0 {
+            write!(&mut self.path, "h {dx} ").unwrap();
+        } else if dy != 0.0 {
+            write!(&mut self.path, "v {dy} ").unwrap();
+        }
+        self.last_point = (x, y);
     }
 
     /// Creates an arc path.
@@ -547,19 +643,23 @@ impl SvgPath2DBuilder {
         sweep_flag: u32,
         pos: (f32, f32),
     ) {
+        let (rx, ry) = self.relative_pos(radius);
+        let (x, y) = self.relative_pos(pos);
         write!(
-            &mut self.0,
-            "A {rx} {ry} {x_axis_rot} {large_arc_flag} {sweep_flag} {x} {y} ",
-            rx = radius.0,
-            ry = radius.1,
-            x = pos.0,
-            y = pos.1,
+            &mut self.path,
+            "a {rx} {ry} {x_axis_rot} {large_arc_flag} {sweep_flag} {x} {y} ",
         )
         .unwrap();
+        self.last_point = pos;
     }
 
     fn close(&mut self) {
-        write!(&mut self.0, "Z ").unwrap();
+        write!(&mut self.path, "Z ").unwrap();
+        self.last_point = self.last_close_point;
+    }
+
+    fn relative_pos(&self, pos: (f32, f32)) -> (f32, f32) {
+        (pos.0 - self.last_point.0, pos.1 - self.last_point.1)
     }
 }
 
@@ -569,7 +669,7 @@ impl SvgPath2DBuilder {
 const CONIC_SEGMENT: usize = 360;
 
 /// A subgradient for conic gradients.
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
 struct SVGSubGradient {
     /// The center point of the gradient.
     center: Axes<Scalar>,
@@ -587,76 +687,33 @@ struct SVGSubGradient {
 // todo: use native approach
 fn sample_color_stops(gradient: &GradientItem, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
-    let mut low = 0;
-    let mut high = gradient.stops.len();
 
-    let mixing_space = gradient.space.try_into_typst().unwrap();
+    let mixing_space: ColorSpace = gradient.space.try_into_typst().unwrap();
     let stops = &gradient.stops;
+    let mut j = stops.partition_point(|(_, ratio)| ratio.0 < t);
 
-    while low < high {
-        let mid = (low + high) / 2;
-        if stops[mid].1 .0 < t {
-            low = mid + 1;
-        } else {
-            high = mid;
+    if j == 0 {
+        while stops.get(j + 1).is_some_and(|(_, r)| r.0 == 0.0) {
+            j += 1;
         }
+
+        return stops[j].0.into_typst();
     }
 
-    if low == 0 {
-        low = 1;
-    }
-    let (col_0, pos_0) = &stops[low - 1];
-    let (col_1, pos_1) = &stops[low];
+    let (col_0, pos_0) = &stops[j - 1];
+    let (col_1, pos_1) = &stops[j];
     let t = (t - pos_0.0) / (pos_1.0 - pos_0.0);
-    let col_0 = (*col_0).into_typst();
-    let col_1 = (*col_1).into_typst();
+    let col_0: Color = (*col_0).into_typst();
+    let col_1: Color = (*col_1).into_typst();
 
-    let out = Color::mix_iter(
+    Color::mix_iter(
         [
             WeightedColor::new(col_0, (1.0 - t) as f64),
             WeightedColor::new(col_1, t as f64),
         ],
-        mixing_space,
+        Smart::Custom(mixing_space),
     )
-    .unwrap();
-
-    // Special case for handling multi-turn hue interpolation.
-    if mixing_space == ColorSpace::Hsl || mixing_space == ColorSpace::Hsv {
-        let color_0 = col_0.to_space(mixing_space);
-        let color_1 = col_1.to_space(mixing_space);
-
-        let hue_0 = match color_0 {
-            Color::Hsl(hsl) => hsl.hue,
-            Color::Hsv(hsv) => hsv.hue,
-            _ => unreachable!(),
-        }
-        .into_positive_degrees();
-
-        let hue_1 = match color_1 {
-            Color::Hsl(hsl) => hsl.hue,
-            Color::Hsv(hsv) => hsv.hue,
-            _ => unreachable!(),
-        }
-        .into_positive_degrees();
-
-        // Check if we need to interpolate over the 360° boundary.
-        if (hue_0 - hue_1).abs() > 180.0 {
-            let hue_0 = if hue_0 < hue_1 { hue_0 + 360.0 } else { hue_0 };
-            let hue_1 = if hue_1 < hue_0 { hue_1 + 360.0 } else { hue_1 };
-
-            let hue = hue_0 * (1.0 - t) + hue_1 * t;
-
-            if mixing_space == ColorSpace::Hsl {
-                let (_, saturation, lightness, alpha) = out.to_hsl().into_components();
-                return Color::Hsl(Hsl::new(hue, saturation, lightness, alpha));
-            } else if mixing_space == ColorSpace::Hsv {
-                let (_, saturation, value, alpha) = out.to_hsv().into_components();
-                return Color::Hsv(Hsv::new(hue, saturation, value, alpha));
-            }
-        }
-    }
-
-    out
+    .unwrap()
 }
 
 struct RatioRepr(f32);
@@ -664,5 +721,72 @@ struct RatioRepr(f32);
 impl std::fmt::Display for RatioRepr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:.3}%", self.0 * 100.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "expected {actual} to be close to {expected}",
+        );
+    }
+
+    #[test]
+    fn conic_path_builder_uses_relative_arc_segments() {
+        let mut builder = SvgPath2DBuilder::default();
+        let theta1 = 0.0f32;
+        let theta2 = TAU / CONIC_SEGMENT as f32;
+
+        builder.move_to(correct_pattern_pos(0.5), correct_pattern_pos(0.5));
+        builder.line_to(
+            correct_pattern_pos(-2.0 * theta1.cos() + 0.5),
+            correct_pattern_pos(2.0 * theta1.sin() + 0.5),
+        );
+        builder.arc(
+            (2.0, 2.0),
+            0.0,
+            0,
+            1,
+            (
+                correct_pattern_pos(-2.0 * theta2.cos() + 0.5),
+                correct_pattern_pos(2.0 * theta2.sin() + 0.5),
+            ),
+        );
+        builder.close();
+
+        assert!(builder.path.starts_with("m 0.5 0.5 h -1 a 2.5 1.5 0 0 1 "));
+        assert!(builder.path.ends_with(" Z "));
+    }
+
+    #[test]
+    fn linear_gradient_points_correct_aspect_ratio() {
+        let (x1, y1, x2, y2) = linear_gradient_points(TAU / 8.0, 10.0);
+
+        assert_close(x1, 0.0);
+        assert_close(y1, 0.0);
+        assert_close(x2 / y2, 10.0);
+        assert!(y2 < 0.2);
+    }
+
+    #[test]
+    fn conic_segment_angles_match_typst_boundaries() {
+        let dtheta = TAU / CONIC_SEGMENT as f32;
+        let angle = TAU / 8.0;
+        let inverse_ratio = 0.1;
+        let (theta1, theta2) = conic_segment_angles(angle, dtheta, inverse_ratio, 0);
+
+        assert_close(
+            theta1 as f64,
+            -correct_aspect_ratio(angle, inverse_ratio) as f64,
+        );
+        assert_close(
+            theta2 as f64,
+            -correct_aspect_ratio(angle + dtheta, inverse_ratio) as f64,
+        );
+        assert!(theta2 < theta1);
     }
 }

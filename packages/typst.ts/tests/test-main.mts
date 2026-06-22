@@ -39,9 +39,14 @@ const getRenderer = async () => {
     return r;
 };
 
+const setSnapshotViewport = (width: number, height: number) => {
+    page.viewport(Math.max(1, Math.ceil(width)), Math.max(1, Math.ceil(height)));
+};
+
 export const testSvg = async (data: Uint8Array) => {
     document.body.innerHTML = '';
     const container = document.createElement('div');
+    container.style.lineHeight = '0';
     const renderer = await getRenderer();
     const rendered = await renderer.runWithSession(async renderSession => {
         renderer.manipulateData({
@@ -54,9 +59,10 @@ export const testSvg = async (data: Uint8Array) => {
         });
     });
     container.innerHTML = rendered;
+    (container.firstElementChild as HTMLElement).style.display = 'block';
     const width = Number.parseFloat((container.firstElementChild as any).dataset.width);
     const height = Number.parseFloat((container.firstElementChild as any).dataset.height);
-    page.viewport(width, height);
+    setSnapshotViewport(width, height);
     document.body.style.backgroundColor = 'white';
     document.body.appendChild(container);
     return { container, width, height };
@@ -76,7 +82,7 @@ export const testCanvas = async (data: Uint8Array) => {
         });
         const width = renderSession.docWidth;
         const height = renderSession.docHeight;
-        page.viewport(width, height);
+        setSnapshotViewport(width, height);
         await renderer.renderToCanvas({
             renderSession,
             container,

@@ -16,9 +16,9 @@ use reflexo::ImmutStr;
 use ttf_parser::{GlyphId, OutlineBuilder};
 use typst::{
     foundations::{Bytes, Smart},
-    introspection::{Introspector, Tag},
+    introspection::{Introspector, PagedPosition, Tag},
     layout::{
-        Abs as TypstAbs, Axes, Dir, Frame, FrameItem, FrameKind, Position, Ratio as TypstRatio,
+        Abs as TypstAbs, Axes, Dir, Frame, FrameItem, FrameKind, Ratio as TypstRatio,
         Size as TypstSize, Transform as TypstTransform,
     },
     model::Destination,
@@ -48,7 +48,7 @@ pub const PAGELESS_SIZE: ir::Size = Size::new(Scalar(1e2 + 4.1234567), Scalar(1e
 
 #[derive(Clone, Copy)]
 struct State<'a> {
-    introspector: &'a Introspector,
+    introspector: &'a dyn Introspector,
     /// The transform of the current item.
     pub transform: Transform,
     /// The size of the first hard frame in the hierarchy.
@@ -56,7 +56,7 @@ struct State<'a> {
 }
 
 impl State<'_> {
-    fn new(introspector: &Introspector, size: ir::Size) -> State<'_> {
+    fn new(introspector: &dyn Introspector, size: ir::Size) -> State<'_> {
         State {
             introspector,
             transform: Transform::identity(),
@@ -251,8 +251,8 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
 
         let idx = 0;
 
-        let state = State::new(&doc.introspector, Size::default());
-        let abs_ref = self.html_element(state, &doc.root, page_reg, idx);
+        let state = State::new(doc.introspector().as_ref(), Size::default());
+        let abs_ref = self.html_element(state, doc.root(), page_reg, idx);
 
         self.spans.push_span(SourceRegion {
             region: doc_reg,
@@ -277,13 +277,13 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
         let doc_reg = self.spans.start();
 
         let pages = doc
-            .pages
+            .pages()
             .par_iter()
             .enumerate()
             .map(|(idx, p)| {
                 let page_reg = self.spans.start();
 
-                let state = State::new(&doc.introspector, p.frame.size().into_typst());
+                let state = State::new(doc.introspector().as_ref(), p.frame.size().into_typst());
                 let abs_ref = self.frame_(state, &p.frame, page_reg, idx, p.fill_or_transparent());
 
                 self.spans.push_span(SourceRegion {
@@ -466,7 +466,10 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
                         Destination::Position(dest) => self.position(*dest, *size),
                         Destination::Location(loc) => {
                             // todo: process location before lowering
-                            let dest = state.introspector.position(*loc);
+                            let dest = state
+                                .introspector
+                                .position(*loc)
+                                .map_or(PagedPosition::ORIGIN, |dest| dest.as_paged_or_default());
                             self.position(dest, *size)
                         }
                     })
@@ -811,7 +814,7 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
 
         let stateful_fill = match shape.fill {
             Some(Paint::Tiling(..) | Paint::Gradient(..)) => {
-                Some(self.paint_shape(state, shape, shape.fill.as_ref().unwrap()))
+                Some(self.paint_shape(state, shape, shape.fill.as_ref().unwrap(), false))
             }
             _ => None,
         };
@@ -820,7 +823,7 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
             Some(FixedStroke {
                 paint: Paint::Tiling(..) | Paint::Gradient(..),
                 ..
-            }) => Some(self.paint_shape(state, shape, &shape.stroke.as_ref().unwrap().paint)),
+            }) => Some(self.paint_shape(state, shape, &shape.stroke.as_ref().unwrap().paint, true)),
             _ => None,
         };
 
@@ -832,7 +835,7 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
 
         let stateful_stroke = || {
             stateful_stroke.unwrap_or_else(|| {
-                self.paint_shape(state, shape, &shape.stroke.as_ref().unwrap().paint)
+                self.paint_shape(state, shape, &shape.stroke.as_ref().unwrap().paint, true)
             })
         };
 
@@ -886,9 +889,9 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
             let mut styles = Vec::new();
 
             if let Some(paint_fill) = &shape.fill {
-                styles.push(PathStyle::Fill(
-                    stateful_fill.unwrap_or_else(|| self.paint_shape(state, shape, paint_fill)),
-                ));
+                styles.push(PathStyle::Fill(stateful_fill.unwrap_or_else(|| {
+                    self.paint_shape(state, shape, paint_fill, false)
+                })));
             }
 
             if let Some(stroke) = &shape.stroke {
@@ -900,7 +903,7 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
                 FillRule::EvenOdd => styles.push(PathStyle::FillRule("evenodd".into())),
             }
 
-            let mut shape_size = shape.geometry.bbox_size();
+            let mut shape_size = shape.bbox(false).size();
             // Edge cases for strokes.
             if shape_size.x.to_pt() == 0.0 {
                 shape_size.x = TypstAbs::pt(1.0);
@@ -956,7 +959,7 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
 
     // /// Convert a document position into vector item.
     // #[comemo::memoize]
-    fn position(&self, pos: Position, size: TypstSize) -> VecItem {
+    fn position(&self, pos: PagedPosition, size: TypstSize) -> VecItem {
         let lnk = LinkItem {
             href: format!(
                 "@typst:handleTypstLocation(this, {}, {}, {})",
@@ -972,16 +975,36 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
     }
 
     #[inline]
-    fn paint_shape(&self, state: State, shape: &Shape, g: &Paint) -> ImmutStr {
+    fn paint_shape(
+        &self,
+        state: State,
+        shape: &Shape,
+        g: &Paint,
+        include_stroke_in_bbox: bool,
+    ) -> ImmutStr {
         self.paint(state, g, |relative_to_self, is_gradient| {
             self.paint_transform(
                 state,
                 relative_to_self,
                 || {
-                    let bbox = shape.geometry.bbox_size();
+                    let bbox = shape.bbox(include_stroke_in_bbox);
+                    let mut offset = bbox.min;
+                    let mut size = bbox.size();
+
+                    // Match typst-svg: negative rectangle sizes mirror gradients.
+                    if let Geometry::Rect(rect) = shape.geometry {
+                        if rect.x.signum() < 1.0 {
+                            offset.x += size.x;
+                            size.x *= -1.0;
+                        }
+                        if rect.y.signum() < 1.0 {
+                            offset.y += size.y;
+                            size.y *= -1.0;
+                        }
+                    }
 
                     // Edge cases for strokes.
-                    let (mut x, mut y) = (bbox.x.to_f32(), bbox.y.to_f32());
+                    let (mut x, mut y) = (size.x.to_f32(), size.y.to_f32());
                     if x == 0.0 {
                         x = 1.0;
                     }
@@ -989,7 +1012,9 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
                         y = 1.0;
                     }
 
-                    ir::Transform::from_scale(ir::Scalar(x), ir::Scalar(y))
+                    ir::Transform::from_scale(ir::Scalar(x), ir::Scalar(y)).post_concat(
+                        ir::Transform::from_translate(offset.x.into_typst(), offset.y.into_typst()),
+                    )
                 },
                 false,
                 is_gradient,
@@ -1023,7 +1048,7 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
         mk_transform: impl FnOnce(Smart<RelativeTo>, bool) -> Transform,
     ) -> ImmutStr {
         match g {
-            Paint::Solid(c) => c.to_css().into(),
+            Paint::Solid(c) => c.clone().to_css().into(),
             Paint::Tiling(e) => {
                 let fingerprint = self.pattern(state, e, mk_transform(e.relative(), false));
                 format!("@{}", fingerprint.as_svg_id("p")).into()
@@ -1049,18 +1074,19 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
             Smart::Custom(t) => t == RelativeTo::Self_,
         };
 
-        let transform = match (is_gradient, relative_to_self) {
-            (true, true) => return scale_ts(),
-            (false, true) if is_text => return scale_ts(),
-            (false, true) => return ir::Transform::identity(),
+        if is_text {
+            return match (is_gradient, relative_to_self) {
+                (_, true) => ir::Transform::identity(),
+                (true, false) => state.body_inv_transform(),
+                (false, false) => state.inv_transform(),
+            };
+        }
+
+        match (is_gradient, relative_to_self) {
+            (true, true) => scale_ts(),
+            (false, true) => ir::Transform::identity(),
             (true, false) => state.body_inv_transform(),
             (false, false) => state.inv_transform(),
-        };
-
-        if is_text {
-            transform.post_concat(scale_ts())
-        } else {
-            transform
         }
     }
 
@@ -1124,6 +1150,7 @@ impl<const ENABLE_REF_CNT: bool> Typst2VecPassImpl<ENABLE_REF_CNT> {
             frame,
             size: g.size().into_typst(),
             spacing: g.spacing().into_typst(),
+            offset: g.offset().into_typst(),
         })));
 
         self.store(VecItem::ColorTransform(Arc::new(ColorTransform {

@@ -1,12 +1,14 @@
 {
 	"name": "@myriaddreamin/typst.svelte",
-	"version": "0.7.0",
+	"version": "0.8.0-rc1",
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build && npm run prepack",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"prepack": "svelte-kit sync && svelte-package",
+		"publish:dry": "npm publish --dry-run --access public",
+		"publish:lib": "npm publish --access public || exit 0",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "playwright test"
@@ -30,9 +32,9 @@
 	},
 	"peerDependencies": {
 		"svelte": "^5.0.0",
-		"@myriaddreamin/typst-ts-renderer": "0.7.0",
-		"@myriaddreamin/typst-ts-web-compiler": "0.7.0",
-		"@myriaddreamin/typst.ts": "0.7.0"
+		"@myriaddreamin/typst-ts-renderer": "0.8.0-rc1",
+		"@myriaddreamin/typst-ts-web-compiler": "0.8.0-rc1",
+		"@myriaddreamin/typst.ts": "0.8.0-rc1"
 	},
 	"devDependencies": {
 		"@myriaddreamin/typst-ts-renderer": "*",
@@ -50,5 +52,9 @@
 	},
 	"keywords": [
 		"svelte"
-	]
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Myriad-Dreamin/typst.ts"
+	}
 }

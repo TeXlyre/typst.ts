@@ -77,16 +77,11 @@ $ ava --verbose
 
 ## Release package
 
-Ensure you have set your **NPM_TOKEN** in the `GitHub` project setting.
+Use the manual workflow at [`../../.github/workflows/release-node.yaml`](../../.github/workflows/release-node.yaml) and follow the maintainer checklist in [`../../docs/release-workflows.md`](../../docs/release-workflows.md).
 
-In `Settings -> Secrets`, add **NPM_TOKEN** into it.
+That workflow:
 
-When you want to release the package:
-
-```
-npm version [<newversion> | major | minor | patch | premajor | preminor | prepatch | prerelease [--preid=<prerelease-id>] | from-git]
-
-git push
-```
-
-GitHub actions will do the rest job for you.
+- builds and tests the platform bindings
+- prepares the napi-rs package manifests before publishing the `typst.node` packages
+- skips `typst.node` npm packages whose exact version was already published
+- uploads the `.node` assets to the GitHub Release tag you supply
