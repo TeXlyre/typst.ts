@@ -436,18 +436,22 @@ impl TypstCompileWorld {
             #[cfg(feature = "pdf")]
             1 => {
                 let task = if let Some(ref opts) = self.pdf_opts {
-                    let pdf_standard = opts
+                    let pdf_standards = opts
                         .pdf_standard
                         .as_deref()
-                        .map(|standard| -> Result<_, serde::de::value::Error> {
-                            Deserialize::deserialize(standard.into_deserializer())
+                        .map(|standards| -> Result<Vec<_>, serde::de::value::Error> {
+                            split_pdf_standards(standards)
+                                .map(|standard| {
+                                    Deserialize::deserialize(standard.into_deserializer())
+                                })
+                                .collect()
                         })
                         .transpose()
                         .map_err(|e| format!("failed to parse PDF standard: {e}"))?;
 
                     ExportPdfTask {
                         export: Default::default(),
-                        pdf_standards: pdf_standard.into_iter().collect(),
+                        pdf_standards: pdf_standards.unwrap_or_default(),
                         no_pdf_tags: opts.pdf_tags.map(|v| !v).unwrap_or(false),
                         creation_timestamp: opts.creation_timestamp,
                         pages: None,
@@ -585,6 +589,20 @@ impl TypstCompileWorld {
             .as_ref()
             .clone())
     }
+}
+
+/// Splits a PDF standard specification into individual standards, accepting
+/// either a single bare standard (`a-3b`), a comma separated list, or a JSON
+/// style array (`["a-3b", "ua-1"]`).
+#[cfg(feature = "pdf")]
+fn split_pdf_standards(standards: &str) -> impl Iterator<Item = &str> + '_ {
+    standards
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(|standard| standard.trim().trim_matches('"'))
+        .filter(|standard| !standard.is_empty())
 }
 
 #[cfg(feature = "pdf")]
