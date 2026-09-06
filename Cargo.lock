@@ -3695,6 +3695,7 @@ dependencies = [
  "svgtypes",
  "tiny-skia-path",
  "typst",
+ "xmlparser",
 ]
 
 [[package]]
