@@ -772,6 +772,12 @@ fn render_image_item(img: &ir::ImageItem) -> SvgText {
 /// style: additional style attribute.
 // todo: error handling
 pub fn render_image(image: &ir::Image, size: Size, is_image_elem: bool, style: &str) -> String {
+    if is_image_elem && image.format.as_ref() == "svg+xml" {
+        if let Some(inlined) = inline_svg(image, size, style) {
+            return inlined;
+        }
+    }
+
     let image_url = embed_as_image_url(image).unwrap();
 
     let styles = image.attrs.iter().map(|attr| match attr {
@@ -793,6 +799,46 @@ pub fn render_image(image: &ir::Image, size: Size, is_image_elem: bool, style: &
     format!(
         r#"<image{cls} width="{w}" height="{h}" xlink:href="{image_url}" preserveAspectRatio="none"{style}{styles}/>"#,
     )
+}
+
+/// Splices an SVG image into the output tree instead of embedding it as a data
+/// URL, so that media referenced from `foreignObject` content stays live.
+///
+/// Returns `None` whenever the source cannot be spliced safely, in which case
+/// the caller falls back to the data URL representation.
+fn inline_svg(image: &ir::Image, size: Size, style: &str) -> Option<String> {
+    if image.size.x == 0 || image.size.y == 0 {
+        return None;
+    }
+
+    let svg = std::str::from_utf8(&image.data).ok()?;
+    if !svg.contains("<foreignObject") {
+        return None;
+    }
+
+    let open_end = xmlparser::Tokenizer::from(svg).find_map(|t| match t {
+        Ok(xmlparser::Token::ElementEnd {
+            end: xmlparser::ElementEnd::Open,
+            span,
+            ..
+        }) => Some(span.end()),
+        _ => None,
+    })?;
+    let open_start = svg[..open_end].rfind("<svg")?;
+    let close_start = svg.rfind("</svg")?;
+    if close_start <= open_end {
+        return None;
+    }
+
+    let root_attrs = &svg[open_start + 4..open_end - 1];
+    let body = &svg[open_end..close_start];
+
+    let sx = size.x.0 / image.size.x as f32;
+    let sy = size.y.0 / image.size.y as f32;
+
+    Some(format!(
+        r#"<g class="typst-image" transform="matrix({sx} 0 0 {sy} 0 0)"{style}><svg{root_attrs}>{body}</svg></g>"#,
+    ))
 }
 
 fn embed_as_image_url(image: &ir::Image) -> Option<String> {
